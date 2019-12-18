@@ -606,7 +606,7 @@ func (g *Generator) generateExpectation(fname string, params, returns *paramList
 	}
 	g.printf("}\n\n")
 
-	g.printf("func (_m *%s) Apply%sExpectations(e %sExpectation) {\n", g.mockName(), fname, fname)
+	g.printf("func (_m *%s) Apply%sExpectation(e %sExpectation) {\n", g.mockName(), fname, fname)
 	g.printf("var args []interface{}\n")
 	for _, name := range params.Names {
 		name = strings.Title(name)
@@ -625,7 +625,12 @@ func (g *Generator) generateExpectation(fname string, params, returns *paramList
 		}
 		g.printf(")")
 	}
+	g.printf("}\n\n")
 
+	g.printf("func (_m *%s) Apply%sExpectations(expectations []%sExpectation) {\n", g.mockName(), fname, fname)
+	g.printf("	for _, e := range expectations {\n")
+	g.printf("		_m.Apply%sExpectation(e)\n", fname)
+	g.printf("	}\n")
 	g.printf("}\n\n")
 }
 
