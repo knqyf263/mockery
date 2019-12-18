@@ -79,6 +79,7 @@ func (g *Generator) populateImports() {
 	if g.importsWerePopulated {
 		return
 	}
+	_ = g.addPackageImport(g.iface.Pkg)
 	for i := 0; i < g.iface.Type.NumMethods(); i++ {
 		fn := g.iface.Type.Method(i)
 		ftype := fn.Type().(*types.Signature)
@@ -500,6 +501,8 @@ func (g *Generator) Generate() error {
 		params := g.genList(ftype.Params(), ftype.Variadic())
 		returns := g.genList(ftype.Results(), false)
 
+		g.generateExpectation(fname, params, returns)
+
 		if len(params.Names) == 0 {
 			g.printf("// %s provides a mock function with given fields:\n", fname)
 		} else {
@@ -574,6 +577,56 @@ func (g *Generator) Generate() error {
 	}
 
 	return nil
+}
+
+func (g *Generator) generateExpectation(fname string, params, returns *paramList) {
+	if 0 < len(params.Names) {
+		g.printf("type %sArgs struct{\n", fname)
+		for i, name := range params.Names {
+			g.printf("%s %s\n", strings.Title(name), params.Types[i])
+			g.printf("%sAnything bool\n", strings.Title(name))
+		}
+		g.printf("}\n\n")
+	}
+
+	if 0 < len(returns.Names) {
+		g.printf("type %sReturns struct{\n", fname)
+		for i, name := range returns.Names {
+			g.printf("%s %s\n", strings.Title(name), returns.Types[i])
+		}
+		g.printf("}\n\n")
+	}
+
+	g.printf("type %sExpectation struct{\n", fname)
+	if 0 < len(params.Names) {
+		g.printf("Args %sArgs\n", fname)
+	}
+	if 0 < len(returns.Names) {
+		g.printf("Returns %sReturns\n", fname)
+	}
+	g.printf("}\n\n")
+
+	g.printf("func (_m *%s) Apply%sExpectations(e %sExpectation) {\n", g.mockName(), fname, fname)
+	g.printf("var args []interface{}\n")
+	for _, name := range params.Names {
+		name = strings.Title(name)
+		g.printf("if e.Args.%sAnything {\n", name)
+		g.printf("    args = append(args, mock.Anything)\n")
+		g.printf("} else {\n")
+		g.printf("    args = append(args, e.Args.%s)\n", name)
+		g.printf("}\n")
+	}
+	g.printf(`_m.On("%s", args...)`, fname)
+
+	if 0 < len(returns.Names) {
+		g.printf(`.Return(`)
+		for _, name := range returns.Names {
+			g.printf("e.Returns.%s,", strings.Title(name))
+		}
+		g.printf(")")
+	}
+
+	g.printf("}\n\n")
 }
 
 // generateCalled returns the Mock.Called invocation string and, if necessary, prints the
