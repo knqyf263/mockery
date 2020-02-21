@@ -581,7 +581,7 @@ func (g *Generator) Generate() error {
 
 func (g *Generator) generateExpectation(fname string, params, returns *paramList) {
 	if 0 < len(params.Names) {
-		g.printf("type %sArgs struct{\n", fname)
+		g.printf("type %s%sArgs struct{\n", g.iface.Name, fname)
 		for i, name := range params.Names {
 			g.printf("%s %s\n", strings.Title(name), params.Types[i])
 			g.printf("%sAnything bool\n", strings.Title(name))
@@ -590,23 +590,23 @@ func (g *Generator) generateExpectation(fname string, params, returns *paramList
 	}
 
 	if 0 < len(returns.Names) {
-		g.printf("type %sReturns struct{\n", fname)
+		g.printf("type %s%sReturns struct{\n", g.iface.Name, fname)
 		for i, name := range returns.Names {
 			g.printf("%s %s\n", strings.Title(name), returns.Types[i])
 		}
 		g.printf("}\n\n")
 	}
 
-	g.printf("type %sExpectation struct{\n", fname)
+	g.printf("type %s%sExpectation struct{\n", g.iface.Name, fname)
 	if 0 < len(params.Names) {
-		g.printf("Args %sArgs\n", fname)
+		g.printf("Args %s%sArgs\n", g.iface.Name, fname)
 	}
 	if 0 < len(returns.Names) {
-		g.printf("Returns %sReturns\n", fname)
+		g.printf("Returns %s%sReturns\n", g.iface.Name, fname)
 	}
 	g.printf("}\n\n")
 
-	g.printf("func (_m *%s) Apply%sExpectation(e %sExpectation) {\n", g.mockName(), fname, fname)
+	g.printf("func (_m *%s) Apply%sExpectation(e %s%sExpectation) {\n", g.mockName(), fname, g.iface.Name, fname)
 	g.printf("var args []interface{}\n")
 	for _, name := range params.Names {
 		name = strings.Title(name)
@@ -627,7 +627,7 @@ func (g *Generator) generateExpectation(fname string, params, returns *paramList
 	}
 	g.printf("}\n\n")
 
-	g.printf("func (_m *%s) Apply%sExpectations(expectations []%sExpectation) {\n", g.mockName(), fname, fname)
+	g.printf("func (_m *%s) Apply%sExpectations(expectations []%s%sExpectation) {\n", g.mockName(), fname, g.iface.Name, fname)
 	g.printf("	for _, e := range expectations {\n")
 	g.printf("		_m.Apply%sExpectation(e)\n", fname)
 	g.printf("	}\n")
