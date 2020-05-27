@@ -583,7 +583,7 @@ func (g *Generator) generateExpectation(fname string, params, returns *paramList
 	if 0 < len(params.Names) {
 		g.printf("type %s%sArgs struct{\n", g.iface.Name, fname)
 		for i, name := range params.Names {
-			g.printf("%s %s\n", strings.Title(name), params.Types[i])
+			g.printf("%s %s\n", strings.Title(name), strings.Replace(params.Types[i],"...","[]", 1))
 			g.printf("%sAnything bool\n", strings.Title(name))
 		}
 		g.printf("}\n\n")
