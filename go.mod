@@ -1,4 +1,4 @@
-module github.com/simar7/mockery
+module github.com/knqyf263/mockery
 
 require (
 	github.com/stretchr/testify v1.2.2
