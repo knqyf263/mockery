@@ -1,24 +1,26 @@
 package mockery
 
 import (
-	"fmt"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/rs/zerolog"
 )
 
 type Cleanup func() error
 
 type OutputStreamProvider interface {
-	GetWriter(iface *Interface) (io.Writer, error, Cleanup)
+	GetWriter(context.Context, *Interface) (io.Writer, error, Cleanup)
 }
 
 type StdoutStreamProvider struct {
 }
 
-func (this *StdoutStreamProvider) GetWriter(iface *Interface) (io.Writer, error, Cleanup) {
+func (this *StdoutStreamProvider) GetWriter(ctx context.Context, iface *Interface) (io.Writer, error, Cleanup) {
 	return os.Stdout, nil, func() error { return nil }
 }
 
@@ -29,9 +31,13 @@ type FileOutputStreamProvider struct {
 	Case                      string
 	KeepTree                  bool
 	KeepTreeOriginalDirectory string
+	FileName                  string
 }
 
-func (this *FileOutputStreamProvider) GetWriter(iface *Interface) (io.Writer, error, Cleanup) {
+func (this *FileOutputStreamProvider) GetWriter(ctx context.Context, iface *Interface) (io.Writer, error, Cleanup) {
+	log := zerolog.Ctx(ctx).With().Str(LogKeyInterface, iface.Name).Logger()
+	ctx = log.WithContext(ctx)
+
 	var path string
 
 	caseName := iface.Name
@@ -60,19 +66,24 @@ func (this *FileOutputStreamProvider) GetWriter(iface *Interface) (io.Writer, er
 		}
 	}
 
+	log = log.With().Str(LogKeyPath, path).Logger()
+	ctx = log.WithContext(ctx)
+
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, err, func() error { return nil }
 	}
 
-	fmt.Printf("Generating mock for: %s in file: %s\n", iface.Name, path)
+	log.Info().Msgf("Generating mock")
 	return f, nil, func() error {
 		return f.Close()
 	}
 }
 
 func (this *FileOutputStreamProvider) filename(name string) string {
-	if this.InPackage && this.TestOnly {
+	if this.FileName != "" {
+		return this.FileName
+	} else if this.InPackage && this.TestOnly {
 		return "mock_" + name + "_test.go"
 	} else if this.InPackage {
 		return "mock_" + name + ".go"

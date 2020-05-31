@@ -1,36 +1,47 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime/pprof"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/pkg/errors"
+	"github.com/rs/zerolog"
 	"github.com/vektra/mockery/mockery"
+	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/tools/go/packages"
 )
 
 const regexMetadataChars = "\\.+*?()|[]{}^$"
 
 type Config struct {
-	fName      string
-	fPrint     bool
-	fOutput    string
-	fOutpkg    string
-	fDir       string
-	fRecursive bool
-	fAll       bool
-	fIP        bool
-	fTO        bool
-	fCase      string
-	fNote      string
-	fProfile   string
-	fVersion   bool
-	quiet      bool
-	fkeepTree  bool
-	buildTags  string
+	fName       string
+	fPrint      bool
+	fOutput     string
+	fOutpkg     string
+	fDir        string
+	fRecursive  bool
+	fAll        bool
+	fIP         bool
+	fTO         bool
+	fCase       string
+	fNote       string
+	fProfile    string
+	fVersion    bool
+	fSrcPkg     string
+	quiet       bool
+	fkeepTree   bool
+	buildTags   string
+	fFileName   string
+	fStructName string
+	fLogLevel   string
 }
 
 func main() {
@@ -44,20 +55,33 @@ func main() {
 	if config.quiet {
 		// if "quiet" flag is set, set os.Stdout to /dev/null to suppress all output to Stdout
 		os.Stdout = os.NewFile(uintptr(syscall.Stdout), os.DevNull)
+		config.fLogLevel = ""
 	}
+
+	log, err := getLogger(config.fLogLevel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	log.Info().Msgf("Starting mockery")
+	ctx := log.WithContext(context.Background())
 
 	if config.fVersion {
 		fmt.Println(mockery.SemVer)
 		return
 	} else if config.fName != "" && config.fAll {
-		fmt.Fprintln(os.Stderr, "Specify -name or -all, but not both")
-		os.Exit(1)
+		log.Fatal().Msgf("Specify -name or -all, but not both")
+	} else if (config.fFileName != "" || config.fStructName != "") && config.fAll {
+		log.Fatal().Msgf("Cannot specify -filename or -structname with -all")
+	} else if config.fDir != "" && config.fDir != "." && config.fSrcPkg != "" {
+		log.Fatal().Msgf("Specify -dir or -srcpkg, but not both")
 	} else if config.fName != "" {
 		recursive = config.fRecursive
 		if strings.ContainsAny(config.fName, regexMetadataChars) {
 			if filter, err = regexp.Compile(config.fName); err != nil {
-				fmt.Fprintln(os.Stderr, "Invalid regular expression provided to -name")
-				os.Exit(1)
+				log.Fatal().Err(err).Msgf("Invalid regular expression provided to -name")
+			} else if config.fFileName != "" || config.fStructName != "" {
+				log.Fatal().Msgf("Cannot specify -filename or -structname with regex in -name")
 			}
 		} else {
 			filter = regexp.MustCompile(fmt.Sprintf("^%s$", config.fName))
@@ -67,8 +91,7 @@ func main() {
 		recursive = true
 		filter = regexp.MustCompile(".*")
 	} else {
-		fmt.Fprintln(os.Stderr, "Use -name to specify the name of the interface or -all for all interfaces found")
-		os.Exit(1)
+		log.Fatal().Msgf("Use -name to specify the name of the interface or -all for all interfaces found")
 	}
 
 	if config.fkeepTree {
@@ -78,8 +101,7 @@ func main() {
 	if config.fProfile != "" {
 		f, err := os.Create(config.fProfile)
 		if err != nil {
-			os.Exit(1)
-			return
+			log.Fatal().Err(err).Msgf("Failed to create profile file")
 		}
 
 		pprof.StartCPUProfile(f)
@@ -97,7 +119,32 @@ func main() {
 			Case:                      config.fCase,
 			KeepTree:                  config.fkeepTree,
 			KeepTreeOriginalDirectory: config.fDir,
+			FileName:                  config.fFileName,
 		}
+	}
+
+	baseDir := config.fDir
+
+	if config.fSrcPkg != "" {
+		pkgs, err := packages.Load(&packages.Config{
+			Mode: packages.NeedFiles,
+		}, config.fSrcPkg)
+		if err != nil || len(pkgs) == 0 {
+			log.Fatal().Err(err).Msgf("Failed to load package %s", config.fSrcPkg)
+		}
+
+		// NOTE: we only pass one package name (config.fSrcPkg) to packages.Load
+		// it should return one package at most
+		pkg := pkgs[0]
+
+		if pkg.Errors != nil {
+			log.Fatal().Err(pkg.Errors[0]).Msgf("Failed to load package %s", config.fSrcPkg)
+		}
+
+		if len(pkg.GoFiles) == 0 {
+			log.Fatal().Msgf("No go files in package %s", config.fSrcPkg)
+		}
+		baseDir = filepath.Dir(pkg.GoFiles[0])
 	}
 
 	visitor := &mockery.GeneratorVisitor{
@@ -105,21 +152,21 @@ func main() {
 		Note:        config.fNote,
 		Osp:         osp,
 		PackageName: config.fOutpkg,
+		StructName:  config.fStructName,
 	}
 
 	walker := mockery.Walker{
-		BaseDir:   config.fDir,
+		BaseDir:   baseDir,
 		Recursive: recursive,
 		Filter:    filter,
 		LimitOne:  limitOne,
 		BuildTags: strings.Split(config.buildTags, " "),
 	}
 
-	generated := walker.Walk(visitor)
+	generated := walker.Walk(ctx, visitor)
 
 	if config.fName != "" && !generated {
-		fmt.Printf("Unable to find %s in any go files under this path\n", config.fName)
-		os.Exit(1)
+		log.Fatal().Msgf("Unable to find '%s' in any go files under this path", config.fName)
 	}
 }
 
@@ -144,8 +191,41 @@ func parseConfigFromArgs(args []string) Config {
 	flagSet.BoolVar(&config.quiet, "quiet", false, "suppress output to stdout")
 	flagSet.BoolVar(&config.fkeepTree, "keeptree", false, "keep the tree structure of the original interface files into a different repository. Must be used with XX")
 	flagSet.StringVar(&config.buildTags, "tags", "", "space-separated list of additional build tags to use")
+	flagSet.StringVar(&config.fFileName, "filename", "", "name of generated file (only works with -name and no regex)")
+	flagSet.StringVar(&config.fStructName, "structname", "", "name of generated struct (only works with -name and no regex)")
+	flagSet.StringVar(&config.fLogLevel, "log-level", "info", "Level of logging")
+	flagSet.StringVar(&config.fSrcPkg, "srcpkg", "", "source pkg to search for interfaces")
 
 	flagSet.Parse(args[1:])
 
 	return config
+}
+
+type timeHook struct{}
+
+func (t timeHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
+	e.Time("time", time.Now())
+}
+
+func getLogger(levelStr string) (zerolog.Logger, error) {
+	level, err := zerolog.ParseLevel(levelStr)
+	if err != nil {
+		return zerolog.Logger{}, errors.Wrapf(err, "Couldn't parse log level")
+	}
+	out := os.Stderr
+	writer := zerolog.ConsoleWriter{
+		Out:        out,
+		TimeFormat: time.RFC822,
+	}
+	if !terminal.IsTerminal(int(out.Fd())) {
+		writer.NoColor = true
+	}
+	log := zerolog.New(writer).
+		Hook(timeHook{}).
+		Level(level).
+		With().
+		Str("version", mockery.SemVer).
+		Logger()
+
+	return log, nil
 }

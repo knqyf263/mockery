@@ -2,6 +2,7 @@ package mockery
 
 import (
 	"bufio"
+	"context"
 	"go/format"
 	"io/ioutil"
 	"path/filepath"
@@ -17,10 +18,12 @@ const pkg = "test"
 type GeneratorSuite struct {
 	suite.Suite
 	parser *Parser
+	ctx    context.Context
 }
 
 func (s *GeneratorSuite) SetupTest() {
 	s.parser = NewParser(nil)
+	s.ctx = context.Background()
 }
 
 func (s *GeneratorSuite) getInterfaceFromFile(interfacePath, interfaceName string) *Interface {
@@ -28,7 +31,7 @@ func (s *GeneratorSuite) getInterfaceFromFile(interfacePath, interfaceName strin
 		interfacePath = filepath.Join(fixturePath, interfacePath)
 	}
 	s.NoError(
-		s.parser.Parse(interfacePath), "The parser is able to parse the given file.",
+		s.parser.Parse(s.ctx, interfacePath), "The parser is able to parse the given file.",
 	)
 
 	s.NoError(
@@ -42,16 +45,18 @@ func (s *GeneratorSuite) getInterfaceFromFile(interfacePath, interfaceName strin
 }
 
 func (s *GeneratorSuite) getGenerator(
-	filepath, interfaceName string, inPackage bool,
+	filepath, interfaceName string, inPackage bool, structName string,
 ) *Generator {
-	return NewGenerator(s.getInterfaceFromFile(filepath, interfaceName), pkg, inPackage)
+	return NewGenerator(
+		s.ctx, s.getInterfaceFromFile(filepath, interfaceName), pkg, inPackage, structName,
+	)
 }
 
 func (s *GeneratorSuite) checkGeneration(
-	filepath, interfaceName string, inPackage bool, expected string,
+	filepath, interfaceName string, inPackage bool, structName string, expected string,
 ) *Generator {
-	generator := s.getGenerator(filepath, interfaceName, inPackage)
-	s.NoError(generator.Generate(), "The generator ran without errors.")
+	generator := s.getGenerator(filepath, interfaceName, inPackage, structName)
+	s.NoError(generator.Generate(s.ctx), "The generator ran without errors.")
 
 	// Mirror the formatting done by normally done by golang.org/x/tools/imports in Generator.Write.
 	//
@@ -77,7 +82,7 @@ func (s *GeneratorSuite) checkGeneration(
 func (s *GeneratorSuite) checkPrologueGeneration(
 	generator *Generator, expected string,
 ) {
-	generator.GeneratePrologue("mocks")
+	generator.GeneratePrologue(ctx, "mocks")
 	s.Equal(
 		expected, generator.buf.String(),
 		"The generator produced the expected prologue.",
@@ -87,9 +92,9 @@ func (s *GeneratorSuite) checkPrologueGeneration(
 func (s *GeneratorSuite) TestCalculateImport() {
 	gp := []string{"a/src", "b/src"}
 
-	s.Equal("c", calculateImport(gp, "a/src/c"))
-	s.Equal("c", calculateImport(gp, "b/src/c"))
-	s.Equal("d/src/c", calculateImport(gp, "d/src/c"))
+	s.Equal("c", calculateImport(ctx, gp, "a/src/c"))
+	s.Equal("c", calculateImport(ctx, gp, "b/src/c"))
+	s.Equal("d/src/c", calculateImport(ctx, gp, "d/src/c"))
 }
 
 func (s *GeneratorSuite) TestGenerator() {
@@ -119,7 +124,7 @@ func (_m *Requester) Get(path string) (string, error) {
 	return r0, r1
 }
 `
-	s.checkGeneration(testFile, "Requester", false, expected)
+	s.checkGeneration(testFile, "Requester", false, "", expected)
 }
 
 func (s *GeneratorSuite) TestGeneratorSingleReturn() {
@@ -142,7 +147,7 @@ func (_m *Requester2) Get(path string) error {
 	return r0
 }
 `
-	s.checkGeneration(testFile2, "Requester2", false, expected)
+	s.checkGeneration(testFile2, "Requester2", false, "", expected)
 }
 
 func (s *GeneratorSuite) TestGeneratorNoArguments() {
@@ -166,7 +171,7 @@ func (_m *Requester3) Get() error {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "requester3.go"), "Requester3", false,
+		filepath.Join(fixturePath, "requester3.go"), "Requester3", false, "",
 		expected,
 	)
 }
@@ -183,7 +188,7 @@ func (_m *Requester4) Get() {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "requester4.go"), "Requester4", false,
+		filepath.Join(fixturePath, "requester4.go"), "Requester4", false, "",
 		expected,
 	)
 }
@@ -200,12 +205,12 @@ func (_m *mockRequester_unexported) Get() {
 }
 `
 	s.checkGeneration(
-		"requester_unexported.go", "requester_unexported", true, expected,
+		"requester_unexported.go", "requester_unexported", true, "", expected,
 	)
 }
 
 func (s *GeneratorSuite) TestGeneratorPrologue() {
-	generator := s.getGenerator(testFile, "Requester", false)
+	generator := s.getGenerator(testFile, "Requester", false, "")
 	expected := `package mocks
 
 import mock "github.com/stretchr/testify/mock"
@@ -216,7 +221,7 @@ import test "github.com/vektra/mockery/mockery/fixtures"
 }
 
 func (s *GeneratorSuite) TestGeneratorPrologueWithImports() {
-	generator := s.getGenerator("requester_ns.go", "RequesterNS", false)
+	generator := s.getGenerator("requester_ns.go", "RequesterNS", false, "")
 	expected := `package mocks
 
 import http "net/http"
@@ -228,7 +233,7 @@ import test "github.com/vektra/mockery/mockery/fixtures"
 }
 
 func (s *GeneratorSuite) TestGeneratorPrologueWithMultipleImportsSameName() {
-	generator := s.getGenerator("same_name_imports.go", "Example", false)
+	generator := s.getGenerator("same_name_imports.go", "Example", false, "")
 
 	expected := `package mocks
 
@@ -242,7 +247,7 @@ import test "github.com/vektra/mockery/mockery/fixtures"
 }
 
 func (s *GeneratorSuite) TestGeneratorPrologueNote() {
-	generator := s.getGenerator(testFile, "Requester", false)
+	generator := s.getGenerator(testFile, "Requester", false, "")
 	generator.GeneratePrologueNote("A\\nB")
 
 	expected := `// Code generated by mockery v1.0.0. DO NOT EDIT.
@@ -256,12 +261,12 @@ func (s *GeneratorSuite) TestGeneratorPrologueNote() {
 }
 
 func (s *GeneratorSuite) TestVersionOnCorrectLine() {
-	gen := s.getGenerator(testFile, "Requester", false)
+	gen := s.getGenerator(testFile, "Requester", false, "")
 
 	//Run everything that is ran by the GeneratorVisitor
 	gen.GeneratePrologueNote("A\\nB")
-	gen.GeneratePrologue(pkg)
-	err := gen.Generate()
+	gen.GeneratePrologue(s.ctx, pkg)
+	err := gen.Generate(s.ctx)
 
 	require.NoError(s.T(), err)
 	scan := bufio.NewScanner(&gen.buf)
@@ -292,7 +297,7 @@ func (_m *RequesterIface) Get() io.Reader {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_iface.go"), "RequesterIface",
-		false, expected,
+		false, "", expected,
 	)
 }
 
@@ -326,7 +331,7 @@ func (_m *RequesterPtr) Get(path string) (*string, error) {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "requester_ptr.go"), "RequesterPtr", false,
+		filepath.Join(fixturePath, "requester_ptr.go"), "RequesterPtr", false, "",
 		expected,
 	)
 }
@@ -362,7 +367,7 @@ func (_m *RequesterSlice) Get(path string) ([]string, error) {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_slice.go"), "RequesterSlice",
-		false, expected,
+		false, "", expected,
 	)
 }
 
@@ -397,7 +402,7 @@ func (_m *RequesterArray) Get(path string) ([2]string, error) {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_array.go"), "RequesterArray",
-		false, expected,
+		false, "", expected,
 	)
 }
 
@@ -429,7 +434,7 @@ func (_m *RequesterNS) Get(path string) (http.Response, error) {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "requester_ns.go"), "RequesterNS", false,
+		filepath.Join(fixturePath, "requester_ns.go"), "RequesterNS", false, "",
 		expected,
 	)
 }
@@ -458,7 +463,7 @@ func (_m *RequesterArgSameAsImport) Get(_a0 string) *json.RawMessage {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_arg_same_as_import.go"),
-		"RequesterArgSameAsImport", false, expected,
+		"RequesterArgSameAsImport", false, "", expected,
 	)
 }
 
@@ -486,7 +491,7 @@ func (_m *RequesterArgSameAsNamedImport) Get(_a0 string) *json.RawMessage {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_arg_same_as_named_import.go"),
-		"RequesterArgSameAsNamedImport", false, expected,
+		"RequesterArgSameAsNamedImport", false, "", expected,
 	)
 }
 
@@ -503,7 +508,7 @@ func (_m *RequesterArgSameAsPkg) Get(_a0 string) {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_arg_same_as_pkg.go"),
-		"RequesterArgSameAsPkg", false, expected,
+		"RequesterArgSameAsPkg", false, "", expected,
 	)
 }
 
@@ -539,7 +544,7 @@ func (_m *KeyManager) GetKey(_a0 string, _a1 uint16) ([]byte, *test.Err) {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "custom_error.go"), "KeyManager", false,
+		filepath.Join(fixturePath, "custom_error.go"), "KeyManager", false, "",
 		expected,
 	)
 }
@@ -566,7 +571,7 @@ func (_m *RequesterElided) Get(path string, url string) error {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_elided.go"), "RequesterElided",
-		false, expected,
+		false, "", expected,
 	)
 }
 
@@ -613,7 +618,7 @@ func (_m *RequesterReturnElided) Get(path string) (int, int, int, error) {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_ret_elided.go"),
-		"RequesterReturnElided", false, expected,
+		"RequesterReturnElided", false, "", expected,
 	)
 }
 
@@ -628,7 +633,7 @@ func (s *GeneratorSuite) TestGeneratorVariadicArgs() {
 	expected = expected[strings.Index(expected, "// RequesterVariadic is"):]
 	s.checkGeneration(
 		filepath.Join(fixturePath, "requester_variadic.go"),
-		"RequesterVariadic", false, expected,
+		"RequesterVariadic", false, "", expected,
 	)
 }
 
@@ -674,7 +679,7 @@ func (_m *Fooer) Foo(f func(string) string) error {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "func_type.go"), "Fooer", false, expected,
+		filepath.Join(fixturePath, "func_type.go"), "Fooer", false, "", expected,
 	)
 }
 
@@ -733,7 +738,7 @@ func (_m *AsyncProducer) Whatever() chan bool {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "async.go"), "AsyncProducer", false,
+		filepath.Join(fixturePath, "async.go"), "AsyncProducer", false, "",
 		expected,
 	)
 }
@@ -766,7 +771,7 @@ func (_m *MyReader) Read(p []byte) (int, error) {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "io_import.go"), "MyReader", false,
+		filepath.Join(fixturePath, "io_import.go"), "MyReader", false, "",
 		expected,
 	)
 }
@@ -815,7 +820,7 @@ func (_m *ConsulLock) Unlock() error {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "consul.go"), "ConsulLock", false, expected,
+		filepath.Join(fixturePath, "consul.go"), "ConsulLock", false, "", expected,
 	)
 }
 
@@ -840,7 +845,7 @@ func (_m *Blank) Create(x interface{}) error {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "empty_interface.go"), "Blank", false,
+		filepath.Join(fixturePath, "empty_interface.go"), "Blank", false, "",
 		expected,
 	)
 }
@@ -866,7 +871,7 @@ func (_m *MapFunc) Get(m map[string]func(string) string) error {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "map_func.go"), "MapFunc", false, expected,
+		filepath.Join(fixturePath, "map_func.go"), "MapFunc", false, "", expected,
 	)
 }
 
@@ -883,7 +888,7 @@ func (_m *UsesOtherPkgIface) DoSomethingElse(obj test.Sibling) {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "mock_method_uses_pkg_iface.go"),
-		"UsesOtherPkgIface", false, expected,
+		"UsesOtherPkgIface", false, "", expected,
 	)
 }
 
@@ -900,7 +905,7 @@ func (_m *MockUsesOtherPkgIface) DoSomethingElse(obj Sibling) {
 `
 	s.checkGeneration(
 		filepath.Join(fixturePath, "mock_method_uses_pkg_iface.go"),
-		"UsesOtherPkgIface", true, expected,
+		"UsesOtherPkgIface", true, "", expected,
 	)
 }
 
@@ -941,7 +946,7 @@ func (_m *Example) B(_a0 string) fixtureshttp.MyStruct {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "same_name_imports.go"), "Example", false,
+		filepath.Join(fixturePath, "same_name_imports.go"), "Example", false, "",
 		expected,
 	)
 }
@@ -949,8 +954,8 @@ func (_m *Example) B(_a0 string) fixtureshttp.MyStruct {
 func (s *GeneratorSuite) TestGeneratorWithImportSameAsLocalPackageInpkgNoCycle() {
 	iface := s.getInterfaceFromFile("imports_same_as_package.go", "ImportsSameAsPackage")
 	pkg := iface.QualifiedName
-	gen := NewGenerator(iface, pkg, true)
-	gen.GeneratePrologue(pkg)
+	gen := NewGenerator(s.ctx, iface, pkg, true, "")
+	gen.GeneratePrologue(s.ctx, pkg)
 	s.NotContains(gen.buf.String(), `import test "github.com/vektra/mockery/mockery/fixtures/test"`)
 }
 
@@ -996,14 +1001,14 @@ func (_m *ImportsSameAsPackage) C(_a0 fixtures.C) {
 }
 `
 	s.checkGeneration(
-		"imports_same_as_package.go", "ImportsSameAsPackage", false,
+		"imports_same_as_package.go", "ImportsSameAsPackage", false, "",
 		expected,
 	)
 }
 
 func (s *GeneratorSuite) TestPrologueWithImportSameAsLocalPackage() {
 	generator := s.getGenerator(
-		"imports_same_as_package.go", "ImportsSameAsPackage", false,
+		"imports_same_as_package.go", "ImportsSameAsPackage", false, "",
 	)
 	expected := `package mocks
 
@@ -1017,7 +1022,7 @@ import test "github.com/vektra/mockery/mockery/fixtures/test"
 
 func (s *GeneratorSuite) TestPrologueWithImportFromNestedInterface() {
 	generator := s.getGenerator(
-		"imports_from_nested_interface.go", "HasConflictingNestedImports", false,
+		"imports_from_nested_interface.go", "HasConflictingNestedImports", false, "",
 	)
 	expected := `package mocks
 
@@ -1059,9 +1064,32 @@ func (_m *A) Call() (test.B, error) {
 }
 `
 	s.checkGeneration(
-		filepath.Join(fixturePath, "struct_value.go"), "A", false,
+		filepath.Join(fixturePath, "struct_value.go"), "A", false, "",
 		expected,
 	)
+}
+
+func (s *GeneratorSuite) TestStructNameOverride() {
+	expected := `// Requester2OverrideName is an autogenerated mock type for the Requester2 type
+type Requester2OverrideName struct {
+	mock.Mock
+}
+
+// Get provides a mock function with given fields: path
+func (_m *Requester2OverrideName) Get(path string) error {
+	ret := _m.Called(path)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string) error); ok {
+		r0 = rf(path)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+`
+	s.checkGeneration(testFile2, "Requester2", false, "Requester2OverrideName", expected)
 }
 
 func TestGeneratorSuite(t *testing.T) {
