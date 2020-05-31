@@ -624,13 +624,19 @@ func (g *Generator) generateExpectation(fname string, params, returns *paramList
 
 	g.printf("func (_m *%s) Apply%sExpectation(e %s%sExpectation) {\n", g.mockName(), fname, g.iface.Name, fname)
 	g.printf("var args []interface{}\n")
-	for _, name := range params.Names {
+	for i, name := range params.Names {
 		name = strings.Title(name)
 		g.printf("if e.Args.%sAnything {\n", name)
 		g.printf("    args = append(args, mock.Anything)\n")
-		g.printf("} else {\n")
-		g.printf("    args = append(args, e.Args.%s)\n", name)
-		g.printf("}\n")
+		if strings.HasPrefix(params.Types[i], "..."){
+			g.printf("} else if e.Args.%s != nil {\n", name)
+			g.printf("    args = append(args, e.Args.%s)\n", name)
+			g.printf("}\n")
+		}else{
+			g.printf("} else {\n")
+			g.printf("    args = append(args, e.Args.%s)\n", name)
+			g.printf("}\n")
+		}
 	}
 	g.printf(`_m.On("%s", args...)`, fname)
 
