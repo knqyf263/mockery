@@ -14,7 +14,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
-	"github.com/vektra/mockery/mockery"
+	"github.com/knqyf263/mockery/mockery"
 	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/tools/go/packages"
 )

@@ -85,7 +85,7 @@ func (g *Generator) populateImports(ctx context.Context) {
 	if g.importsWerePopulated {
 		return
 	}
-	_ = g.addPackageImport(g.iface.Pkg)
+	_ = g.addPackageImport(ctx, g.iface.Pkg)
 	for i := 0; i < g.iface.Type.NumMethods(); i++ {
 		fn := g.iface.Type.Method(i)
 		ftype := fn.Type().(*types.Signature)
